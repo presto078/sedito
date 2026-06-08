@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(page_title="SedíTo! - Párování tržeb", page_icon="💳", layout="centered")
+st.set_page_config(page_title="SedíTo! - Profesionální párování tržeb", page_icon="💳", layout="centered")
 
 st.title("💳 SedíTo! – Kontrola a párování tržeb")
-st.write("Chytré odsouhlasení pokladny Datona vůči bankovním terminálům a Amexu.")
+st.write("Profesionální odsouhlasení pokladních dat Datona vůči bankovním terminálům a Amexu.")
 
 # 1. Nahrání souborů
 st.subheader("1. Krok: Nahrání podkladů")
@@ -23,11 +23,11 @@ def load_df(uploaded_file, skip_rows=0):
     else:
         return pd.read_excel(uploaded_file, skiprows=skip_rows)
 
-if st.button("🚀 Spustit chytrou analýzu", use_container_width=True):
+if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
     if not file_pokpol or not file_karty or not file_amex:
         st.error("Prosím, nahrajte všechny 3 požadované soubory.")
     else:
-        with st.spinner("Provádím vnitřní kontrolu pokladny a párování s bankou..."):
+        with st.spinner("Provádím vnitřní audit pokladny, kontrolu hotovostí a párování s bankou..."):
             try:
                 # Načtení dat
                 pokpol = load_df(file_pokpol, skip_rows=0)
@@ -53,28 +53,29 @@ if st.button("🚀 Spustit chytrou analýzu", use_container_width=True):
                 terminal_all = pd.concat([karty[term_cols], amex[term_cols]], ignore_index=True).sort_values('dt')
                 terminal_all['matched'] = False
                 
-                # --- VNITŘNÍ PÁROVÁNÍ POKLADNY (Prodeje vs Storna) ---
-                pokpol['vnitrni_storno'] = False
-                pokpol_pos = pokpol[pokpol['Cena'] > 0].copy().sort_values('dt')
-                pokpol_neg = pokpol[pokpol['Cena'] < 0].copy().sort_values('dt')
+                # Rozdělení pokladny podle nového sloupce ZpPlat (E)
+                pokpol_karty = pokpol[pokpol['ZpPlat'] == 'K'].copy()
+                pokpol_ostatni = pokpol[pokpol['ZpPlat'] != 'K'].copy()
+                
+                # --- 1. KROK: VYRUŠENÍ VNITŘNÍCH STOREN V KASE ---
+                pokpol_karty['vnitrni_storno'] = False
+                pokpol_k_pos = pokpol_karty[pokpol_karty['Cena'] > 0].copy().sort_values('dt')
+                pokpol_k_neg = pokpol_karty[pokpol_karty['Cena'] < 0].copy().sort_values('dt')
                 
                 storna_rows = []
-                # Pro každé storno najdeme v pokladně jeho plusové dvojče ve stejný den
-                for n_idx, n_row in pokpol_neg.iterrows():
+                for n_idx, n_row in pokpol_k_neg.iterrows():
                     target_amt = abs(n_row['Cena'])
-                    # Hledáme plusový doklad se stejnou částkou, který ještě nebyl stornován a je blízko časově
-                    candidates = pokpol_pos[(pokpol_pos['Cena'] == target_amt) & (~pokpol_pos['vnitrni_storno'])]
+                    candidates = pokpol_k_pos[(pokpol_k_pos['Cena'] == target_amt) & (~pokpol_k_pos['vnitrni_storno'])]
                     if not candidates.empty:
                         time_diffs = (candidates['dt'] - n_row['dt']).abs()
                         best_p_idx = time_diffs.idxmin()
-                        pokpol_pos.loc[best_p_idx, 'vnitrni_storno'] = True
-                        
+                        pokpol_k_pos.loc[best_p_idx, 'vnitrni_storno'] = True
                         storna_rows.append({
                             'Datum Pokladna': n_row['Datum a Čas'],
                             'Doklad CZAK (Storno)': n_row['CZAK'],
                             'Částka Storna': n_row['Cena'],
-                            'Původní Doklad CZAK': pokpol_pos.loc[best_p_idx, 'CZAK'],
-                            'Stav': 'Interně vyrušeno (V pořádku)'
+                            'Původní Doklad CZAK': pokpol_k_pos.loc[best_p_idx, 'CZAK'],
+                            'Stav': 'Interně stornováno (V pořádku)'
                         })
                     else:
                         storna_rows.append({
@@ -82,17 +83,17 @@ if st.button("🚀 Spustit chytrou analýzu", use_container_width=True):
                             'Doklad CZAK (Storno)': n_row['CZAK'],
                             'Částka Storna': n_row['Cena'],
                             'Původní Doklad CZAK': 'Nenalezen',
-                            'Stav': 'Sirotčí storno (Chybí plusový doklad)'
+                            'Stav': 'Sirotčí storno (Chybí prodej)'
                         })
                 
-                # Pro párování s bankou použijeme POUZE ta plusová data, která nebyla interně stornována!
-                pokpol_for_bank = pokpol_pos[~pokpol_pos['vnitrni_storno']].copy()
+                # Pouze prodeje, které nebyly stornovány
+                pokpol_active_karty = pokpol_k_pos[~pokpol_k_pos['vnitrni_storno']].copy()
                 
-                # --- PÁROVÁNÍ S BANKOVNÍM TERMINÁLEM ---
+                # --- 2. KROK: PÁROVÁNÍ 1:1 KASA (K) VS BANKA ---
                 matched_list = []
                 unmatched_pokpol = []
                 
-                for idx, row in pokpol_for_bank.iterrows():
+                for idx, row in pokpol_active_karty.iterrows():
                     amt = row['Cena']
                     candidates = terminal_all[(terminal_all['Částka brutto'] == amt) & (~terminal_all['matched'])]
                     
@@ -115,59 +116,78 @@ if st.button("🚀 Spustit chytrou analýzu", use_container_width=True):
                     else:
                         unmatched_pokpol.append(row)
                 
-                # 1. Chybí na terminálu (Skutečné ztráty)
-                df_chybi = pd.DataFrame(unmatched_pokpol)
-                if not df_chybi.empty:
-                    df_chybi = df_chybi[['Datum a Čas', 'CZAK', 'Cena', 'Platební karta']].rename(
-                        columns={'Datum a Čas': 'Datum Pokladna', 'Cena': 'Částka Pokladna', 'Platební karta': 'Očekávaná Karta'}
-                    )
-                else:
-                    df_chybi = pd.DataFrame(columns=['Datum Pokladna', 'CZAK', 'Částka Pokladna', 'Očekávaná Karta'])
+                # --- 3. KROK: AUDIT ZÁMĚN A PŘEKLEPŮ ---
+                df_prebyva_terminal = terminal_all[~terminal_all['matched']].copy()
+                df_chyby_preklepy_zaměny = []
                 
-                # 2. Přebývá na terminálu
-                df_prebyva = terminal_all[~terminal_all['matched']].copy()
-                if not df_prebyva.empty:
-                    df_prebyva = df_prebyva[['Čas transakce', 'Částka brutto', 'Zdroj', 'Číslo karty', 'Typ karty']].rename(
-                        columns={'Čas transakce': 'Čas Terminál', 'Částka brutto': 'Částka Terminál'}
-                    )
-                else:
-                    df_prebyva = pd.DataFrame(columns=['Čas Terminál', 'Částka Terminál', 'Zdroj', 'Číslo karty', 'Typ karty'])
+                for row in unmatched_pokpol:
+                    df_chyby_preklepy_zaměny.append({
+                        'Typ neshody': '❌ Chybí na terminálu (Ztráta)',
+                        'Datum / Čas': row['Datum a Čas'],
+                        'Částka v Kase': row['Cena'],
+                        'Částka v Bance': 0,
+                        'Doklad / Karta': row['CZAK'],
+                        'Dohledaná poznámka': 'Zavřeno na kartu, ale zákazník neodpípl / transakce neprošla.'
+                    })
                 
-                # 3. Interní storna
-                df_storna_final = pd.DataFrame(storna_rows)
-                if df_storna_final.empty:
-                    df_storna_final = pd.DataFrame(columns=['Datum Pokladna', 'Doklad CZAK (Storno)', 'Částka Storna', 'Původní Doklad CZAK', 'Stav'])
+                for t_idx, t_row in df_prebyva_terminal.iterrows():
+                    amt = t_row['Částka brutto']
+                    t_day = t_row['dt'].date()
+                    
+                    pokpol_ostatni['date'] = pokpol_ostatni['dt'].dt.date
+                    hot_cand = pokpol_ostatni[(pokpol_ostatni['Cena'] == amt) & (pokpol_ostatni['date'] == t_day)]
+                    
+                    if not hot_cand.empty:
+                        best_h_row = hot_cand.iloc[0]
+                        df_chyby_preklepy_zaměny.append({
+                            'Typ neshody': '⚠️ Záměna: Karta místo HOTOVOSTI',
+                            'Datum / Čas': best_h_row['Datum a Čas'],
+                            'Částka v Kase': best_h_row['Cena'],
+                            'Částka v Bance': amt,
+                            'Doklad / Karta': best_h_row['CZAK'],
+                            'Dohledaná poznámka': f"V kase je zadáno jako Hotovost (ZpPlat={best_h_row['ZpPlat']}), ale na terminálu prošla karta."
+                        })
+                        terminal_all.loc[t_idx, 'matched'] = True
+                        continue
+                    
+                    day_unmatched_k = [r for r in unmatched_pokpol if pd.to_datetime(r['Datum a Čas'], dayfirst=True).date() == t_day]
+                    found_preklep = False
+                    for r_k in day_unmatched_k:
+                        if abs(r_k['Cena'] - amt) <= 200:
+                            df_chyby_preklepy_zaměny.append({
+                                'Typ neshody': '✍️ Překlep obsluhy na terminálu',
+                                'Datum / Čas': r_k['Datum a Čas'],
+                                'Částka v Kase': r_k['Cena'],
+                                'Částka v Bance': amt,
+                                'Doklad / Karta': r_k['CZAK'],
+                                'Dohledaná poznámka': f"V kase je zadáno {r_k['Cena']} Kč, ale na terminál naťukali {amt} Kč (rozdíl {amt - r_k['Cena']} Kč)."
+                            })
+                            terminal_all.loc[t_idx, 'matched'] = True
+                            df_chyby_preklepy_zaměny = [x for x in df_chyby_preklepy_zaměny if x['Doklad / Karta'] != r_k['CZAK']]
+                            found_preklep = True
+                            break
+                    
+                    if found_preklep: continue
+                        
+                    df_chyby_preklepy_zaměny.append({
+                        'Typ neshody': '💰 Přebývá na terminálu (Nezadáno)',
+                        'Datum / Čas': t_row['Čas transakce'],
+                        'Částka v Kase': 0,
+                        'Částka v Bance': amt,
+                        'Doklad / Karta': t_row['Číslo karty'],
+                        'Dohledaná poznámka': f"Peníze dorazily na účet ({t_row['Zdroj']}), ale v kase chybí jakýkoliv doklad."
+                    })
                 
-                # 4. V pořádku spárované
+                df_neshody_final = pd.DataFrame(df_chyby_preklepy_zaměny)
                 df_matched = pd.DataFrame(matched_list)
+                df_storna_final = pd.DataFrame(storna_rows)
                 
-                # Zobrazení výsledků na webu
-                st.success("Chytrá analýza dokončena!")
+                st.success("Hloubkový audit tržeb hotov!")
                 
                 col1, col2, col3 = st.columns(3)
-                col1.metric("Skutečně chybí v bance", f"{len(df_chybi)} ks")
-                col2.metric("Přebývá na terminálu", f"{len(df_prebyva)} ks")
-                col3.metric("Vyrušená storna v kase", f"{len(df_storna_final)} ks")
+                col1.metric("Celkem chyb a neshod", f"{len(df_neshody_final)} ks")
+                col2.metric("Úspěšně spárováno", f"{len(df_matched)} ks")
+                col3.metric("Vyrušená vnitřní storna", f"{len(df_storna_final)} ks")
                 
-                # Vygenerování Excelu do paměti
                 output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df_chybi.to_excel(writer, sheet_name='Skutečně chybí v bance', index=False)
-                    df_prebyva.to_excel(writer, sheet_name='Přebývá na terminálu', index=False)
-                    df_storna_final.to_excel(writer, sheet_name='Vyrušená storna v kase', index=False)
-                    if not df_matched.empty:
-                        df_matched.to_excel(writer, sheet_name='V pořádku spárované (1-1)', index=False)
-                
-                excel_data = output.getvalue()
-                
-                st.subheader("2. Krok: Stažení pročištěného přehledu")
-                st.download_button(
-                    label="📥 Stáhnout opravený Excel",
-                    data=excel_data,
-                    file_name="Cisty_Prehled_Trzeb.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
-                
-            except Exception as e:
-                st.error(f"Chyba při analýze dat: {str(e)}")
+                with pd.ExcelWriter(output, engine='openpyxl')
