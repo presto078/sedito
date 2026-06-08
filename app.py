@@ -61,4 +61,55 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                 # --- 1. KROK: VYRUŠENÍ VNITŘNÍCH STOREN В KASE ---
                 pokpol_karty['vnitrni_storno'] = False
                 pokpol_k_pos = pokpol_karty[pokpol_karty['Cena'] > 0].copy()
-                pokpol_k
+                pokpol_k_neg = pokpol_karty[pokpol_karty['Cena'] < 0].copy()
+                
+                storna_rows = []
+                for n_idx, n_row in pokpol_k_neg.iterrows():
+                    target_amt = abs(n_row['Cena'])
+                    candidates = pokpol_k_pos[(pokpol_k_pos['Cena'] == target_amt) & (~pokpol_k_pos['vnitrni_storno'])]
+                    if not candidates.empty:
+                        time_diffs = (candidates['dt'] - n_row['dt']).abs()
+                        time_diffs_12h = ((candidates['dt'] - n_row['dt']).abs() - pd.Timedelta(hours=12)).abs()
+                        final_diffs = pd.concat([time_diffs, time_diffs_12h], axis=1).min(axis=1)
+                        best_p_idx = final_diffs.idxmin()
+                        
+                        pokpol_k_pos.loc[best_p_idx, 'vnitrni_storno'] = True
+                        storna_rows.append({
+                            'Datum Pokladna': n_row['Datum a Čas'],
+                            'Doklad CZAK (Storno)': n_row['CZAK'],
+                            'Částka Storna': n_row['Cena'],
+                            'Původní Doklad CZAK': pokpol_k_pos.loc[best_p_idx, 'CZAK'],
+                            'Stav': 'Interně stornováno (V pořádku)'
+                        })
+                    else:
+                        storna_rows.append({
+                            'Datum Pokladna': n_row['Datum a Čas'],
+                            'Doklad CZAK (Storno)': n_row['CZAK'],
+                            'Částka Storna': n_row['Cena'],
+                            'Původní Doklad CZAK': 'Nenalezen',
+                            'Stav': 'Sirotčí storno (Chybí prodej)'
+                        })
+                
+                pokpol_active_karty = pokpol_k_pos[~pokpol_k_pos['vnitrni_storno']].copy()
+                
+                # --- 2. KROK: INTELIGENTNÍ PÁROVÁNÍ 1:1 S OPRAVOU AM/PM ČASU ---
+                matched_list = []
+                unmatched_pokpol = []
+                
+                for idx, row in pokpol_active_karty.iterrows():
+                    amt = row['Cena']
+                    candidates = terminal_all[(terminal_all['Částka brutto'] == amt) & (~terminal_all['matched'])]
+                    
+                    if not candidates.empty:
+                        diff_normal = (candidates['dt'] - row['dt']).abs()
+                        diff_12h = ((candidates['dt'] - (row['dt'] + pd.Timedelta(hours=12))).abs())
+                        combined_diffs = pd.concat([diff_normal, diff_12h], axis=1).min(axis=1)
+                        best_idx = combined_diffs.idxmin()
+                        
+                        terminal_all.loc[best_idx, 'matched'] = True
+                        matched_list.append({
+                            'Pokladna Datum': row['Datum a Čas'],
+                            'Doklad CZAK': row['CZAK'],
+                            'Částka Pokladna': amt,
+                            'Terminál Čas': terminal_all.loc[best_idx, 'Čas transakce'],
+                            'Terminál Částka': terminal_all.loc
