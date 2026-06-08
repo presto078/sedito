@@ -152,4 +152,93 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                             'Datum / Čas': best_h_row['Datum a Čas'],
                             'Částka v Kase': best_h_row['Cena'],
                             'Částka v Bance': amt,
-                            'Finanční Dopad':
+                            'Finanční Dopad': 0,
+                            'Doklad / Karta': best_h_row['CZAK'],
+                            'Poznámka': f"V kase zapsáno jako Hotovost, ale na terminálu prošla karta. Finančně se to vyrovná."
+                        })
+                        terminal_all.loc[t_idx, 'matched'] = True
+                        continue
+                    
+                    day_unmatched_k = [r for r in unmatched_pokpol if pd.to_datetime(r['Datum a Čas'], dayfirst=True).date() == t_day]
+                    found_preklep = False
+                    for r_k in day_unmatched_k:
+                        if abs(r_k['Cena'] - amt) <= 200:
+                            rozdil_p = amt - r_k['Cena']
+                            df_chyby_preklepy_zaměny.append({
+                                'Typ neshody': '✍️ Překlep obsluhy na terminálu',
+                                'Datum / Čas': r_k['Datum a Čas'],
+                                'Částka v Kase': r_k['Cena'],
+                                'Částka v Bance': amt,
+                                'Finanční Dopad': rozdil_p,
+                                'Doklad / Karta': r_k['CZAK'],
+                                'Poznámka': f"V kase zadáno {r_k['Cena']} Kč, ale na terminálu strženo {amt} Kč (rozdíl {rozdil_p} Kč)."
+                            })
+                            terminal_all.loc[t_idx, 'matched'] = True
+                            df_chyby_preklepy_zaměny = [x for x in df_chyby_preklepy_zaměny if x['Doklad / Karta'] != r_k['CZAK']]
+                            suma_chybi -= r_k['Cena']
+                            if rozdil_p < 0: suma_chybi += abs(rozdil_p)
+                            else: suma_prebyva += rozdil_p
+                            found_preklep = True
+                            break
+                    
+                    if found_preklep: continue
+                        
+                    df_chyby_preklepy_zaměny.append({
+                        'Typ neshody': '💰 Přebývá na terminálu (Nezadáno)',
+                        'Datum / Čas': t_row['Čas transakce'],
+                        'Částka v Kase': 0,
+                        'Částka v Bance': amt,
+                        'Finanční Dopad': amt,
+                        'Doklad / Karta': t_row['Číslo karty'],
+                        'Poznámka': f"Peníze jsou v bance ({t_row['Zdroj']}), ale v kase chybí doklad."
+                    })
+                    suma_prebyva += amt
+                
+                df_neshody_final = pd.DataFrame(df_chyby_preklepy_zaměny)
+                df_matched = pd.DataFrame(matched_list)
+                df_storna_final = pd.DataFrame(storna_rows)
+                
+                cisty_rozdil = int(suma_chybi - suma_prebyva)
+                
+                st.success("Hloubkový audit tržeb dokončen!")
+                
+                col1, col2 = st.columns(2)
+                col1.metric("Celkový rozdíl (Účetní saldo)", f"{cisty_rozdil} Kč")
+                col2.metric("Úspěšně spárované tržby", f"{len(df_matched)} ks")
+                
+                # --- EXPORT DO EXCELU S FINANČNÍM SHRNUTÍM DOLE ---
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df_neshody_final.to_excel(writer, sheet_name='HLAVNÍ ROZDÍLY A CHYBY', index=False)
+                    
+                    # Správný zápis shrnutí bez syntaktických chyb
+                    worksheet = writer.sheets['HLAVNÍ ROZDÍLY A CHYBY']
+                    start_row = len(df_neshody_final) + 3
+                    bold_font = Font(bold=True)
+                    
+                    worksheet.cell(row=start_row, column=1, value="📊 FINANČNÍ SHRNUTÍ AUDITU (PRO ÚČETNÍ)").font = bold_font
+                    worksheet.cell(row=start_row+1, column=1, value="Celkem chybí v bance (Manko v kase):")
+                    worksheet.cell(row=start_row+1, column=3, value=float(suma_chybi))
+                    
+                    worksheet.cell(row=start_row+2, column=1, value="Celkem přebývá v bance (Nezadáno v kase):")
+                    worksheet.cell(row=start_row+2, column=3, value=float(suma_prebyva))
+                    
+                    worksheet.cell(row=start_row+3, column=1, value="VÝSLEDNÉ ÚČETNÍ SALDO (ROZDÍL):").font = bold_font
+                    worksheet.cell(row=start_row+3, column=3, value=float(cisty_rozdil)).font = bold_font
+                    
+                    if not df_matched.empty:
+                        df_matched.to_excel(writer, sheet_name='V pořádku spárované (1-1)', index=False)
+                    if not df_storna_final.empty:
+                        df_storna_final.to_excel(writer, sheet_name='Vnitřní storna v kase', index=False)
+                        
+                excel_data = output.getvalue()
+                st.subheader("2. Krok: Stažení kompletního auditu")
+                st.download_button(
+                    label="📥 Stáhnout pročištěný Excel s přehledem salda",
+                    data=excel_data,
+                    file_name="Kompletni_Audit_Trzeb_Datona.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"Chyba při hloubkové analýze: {str(e)}")
