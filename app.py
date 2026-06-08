@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+from openpyxl.styles import Font
 
 st.set_page_config(page_title="SedíTo! - Profesionální párování tržeb", page_icon="💳", layout="centered")
 
@@ -151,23 +152,4 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                             'Datum / Čas': best_h_row['Datum a Čas'],
                             'Částka v Kase': best_h_row['Cena'],
                             'Částka v Bance': amt,
-                            'Finanční Dopad': 0,
-                            'Doklad / Karta': best_h_row['CZAK'],
-                            'Poznámka': f"V kase zapsáno jako Hotovost, ale na terminálu prošla karta. Finančně se to vyrovná."
-                        })
-                        terminal_all.loc[t_idx, 'matched'] = True
-                        continue
-                    
-                    day_unmatched_k = [r for r in unmatched_pokpol if pd.to_datetime(r['Datum a Čas'], dayfirst=True).date() == t_day]
-                    found_preklep = False
-                    for r_k in day_unmatched_k:
-                        if abs(r_k['Cena'] - amt) <= 200:
-                            rozdil_p = amt - r_k['Cena']
-                            df_chyby_preklepy_zaměny.append({
-                                'Typ neshody': '✍️ Překlep obsluhy na terminálu',
-                                'Datum / Čas': r_k['Datum a Čas'],
-                                'Částka v Kase': r_k['Cena'],
-                                'Částka v Bance': amt,
-                                'Finanční Dopad': rozdil_p,
-                                'Doklad / Karta': r_k['CZAK'],
-                                'Poznámka': f"V kase zadáno {r_k['Cena']} Kč, ale na terminálu strženo {amt} Kč (rozdíl
+                            'Finanční Dopad':
