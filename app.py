@@ -91,7 +91,7 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                         })
                 
                 pokpol_active_karty = pokpol_k_pos[~pokpol_k_pos['vnitrni_storno']].copy()
-# --- 2. KROK: INTELIGENTNÍ PÁROVÁNÍ 1:1 ---
+                # --- 2. KROK: INTELIGENTNÍ PÁROVÁNÍ 1:1 ---
                 matched_list = []
                 unmatched_pokpol = []
                 
@@ -129,8 +129,8 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                 pokladna_zpracovano = set()
                 terminal_zpracovano = set()
                 
-                # Hledání překlepů (rozdíl do 200 Kč ve stejný den)
-                for idx, row in unmatched_pokpol.iterrows():
+                # OPAVA: Přímý průchod přes čistý seznam bez .iterrows()
+                for row in unmatched_pokpol:
                     amt_kasa = row['Cena']
                     day_kasa = pd.to_datetime(row['Datum a Čas'], dayfirst=True).date()
                     
@@ -141,6 +141,7 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                         
                         if day_kasa == day_banka and abs(amt_kasa - amt_banka) <= 200:
                             rozdil = amt_banka - amt_kasa
+                            txt_pzn1 = f"V kase zapsáno {amt_kasa} Kč, ale na terminálu strženo {amt_banka} Kč. Účetní musí upravit hotovost o {rozdil} Kč!"
                             df_chyby_preklepy_zaměny.append({
                                 'Typ neshody': '✍️ Překlep na terminálu',
                                 'Datum / Čas': row['Datum a Čas'],
@@ -148,7 +149,7 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                                 'Částka v Bance': amt_banka,
                                 'Finanční Dopad': rozdil,
                                 'Doklad / Karta': row['CZAK'],
-                                'Poznámka': f"V kase zapsáno {amt_kasa} Kč, ale na terminálu strženo {amt_banka} Kč. Účetní musí upravit hotovost o {rozdil} Kč!"
+                                'Poznámka': txt_pzn1
                             })
                             pokladna_zpracovano.add(row['CZAK'])
                             terminal_zpracovano.add(t_idx)
@@ -160,7 +161,7 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                             break
                 
                 # Čisté ztráty z kasy
-                for idx, row in unmatched_pokpol.iterrows():
+                for row in unmatched_pokpol:
                     if row['CZAK'] in pokladna_zpracovano: continue
                     df_chyby_preklepy_zaměny.append({
                         'Typ neshody': '❌ Chybí na terminálu (Ztráta)',
@@ -184,6 +185,7 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                     
                     if not hot_cand.empty:
                         best_h_row = hot_cand.iloc[0]
+                        txt_pzn2 = f"V kase zapsáno jako Hotovost, ale na terminálu prošla karta. Převeďte {amt} Kč z hotovosti na karty."
                         df_chyby_preklepy_zaměny.append({
                             'Typ neshody': '⚠️ Záměna: Karta místo HOTOVOSTI',
                             'Datum / Čas': best_h_row['Datum a Čas'],
@@ -191,11 +193,12 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                             'Částka v Bance': amt,
                             'Finanční Dopad': 0,
                             'Doklad / Karta': best_h_row['CZAK'],
-                            'Poznámka': f"V kase zapsáno jako Hotovost, ale na terminálu prošla karta. Převeďte {amt} Kč z hotovosti na karty."
+                            'Poznámka': txt_pzn2
                         })
                         terminal_all.loc[t_idx, 'matched'] = True
                         continue
                         
+                    txt_pzn3 = f"Peníze jsou v bance ({t_row['Zdroj']}), ale v kase chybí jakýkoliv doklad."
                     df_chyby_preklepy_zaměny.append({
                         'Typ neshody': '💰 Přebývá na terminálu',
                         'Datum / Čas': t_row['Čas transakce'],
@@ -203,7 +206,7 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                         'Částka v Bance': amt,
                         'Finanční Dopad': amt,
                         'Doklad / Karta': t_row['Číslo karty'],
-                        'Poznámka': f"Peníze jsou v bance ({t_row['Zdroj']}), ale v kase chybí jakýkoliv doklad."
+                        'Poznámka': txt_pzn3
                     })
                     suma_prebyva += amt
                 
