@@ -56,4 +56,8 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                 
                 # Rozdělení pokladny podle sloupce ZpPlat
                 pokpol_karty = pokpol[pokpol['ZpPlat'] == 'K'].copy()
-                pokpol_ostatni = pokpol[pokpol['ZpPlat']
+                pokpol_ostatni = pokpol[pokpol['ZpPlat'] != 'K'].copy()
+                
+                # --- 1. KROK: VYRUŠENÍ VNITŘNÍCH STOREN В KASE ---
+                pokpol_karty['vnitrni_storno'] = False
+                pokpol_k_pos = pokpol_karty[pokpol_karty['Cena'] > 0].copy().sort
