@@ -190,4 +190,21 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                 col3.metric("Vyrušená vnitřní storna", f"{len(df_storna_final)} ks")
                 
                 output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl')
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df_neshody_final.to_excel(writer, sheet_name='HLAVNÍ ROZDÍLY A CHYBY', index=False)
+                    if not df_matched.empty:
+                        df_matched.to_excel(writer, sheet_name='V pořádku spárované (1-1)', index=False)
+                    if not df_storna_final.empty:
+                        df_storna_final.to_excel(writer, sheet_name='Vnitřní storna v kase', index=False)
+                        
+                excel_data = output.getvalue()
+                st.subheader("2. Krok: Stažení kompletního auditu")
+                st.download_button(
+                    label="📥 Stáhnout pročištěný Excel pro účetní",
+                    data=excel_data,
+                    file_name="Kompletni_Audit_Trzeb_Datona.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"Chyba při hloubkové analýze: {str(e)}")
