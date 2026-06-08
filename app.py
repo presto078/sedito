@@ -5,7 +5,7 @@ import io
 st.set_page_config(page_title="SedíTo! - Profesionální párování tržeb", page_icon="💳", layout="centered")
 
 st.title("💳 SedíTo! – Kontrola a párování tržeb")
-st.write("Profesionální odsouhlasení pokladních dat Datona vůči bankovním terminálům a Amexu.")
+st.write("Profesionální odsouhlasení pokladních dat Datona vůči bankovním terminálům a Amexu s korekcí 12h formátu.")
 
 # 1. Nahrání souborů
 st.subheader("1. Krok: Nahrání podkladů")
@@ -23,11 +23,11 @@ def load_df(uploaded_file, skip_rows=0):
     else:
         return pd.read_excel(uploaded_file, skiprows=skip_rows)
 
-if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
+if st.button("🚀 Spustit inteligentní analýzu", use_container_width=True):
     if not file_pokpol or not file_karty or not file_amex:
         st.error("Prosím, nahrajte všechny 3 požadované soubory.")
     else:
-        with st.spinner("Provádím vnitřní audit pokladny, kontrolu hotovostí a párování s bankou..."):
+        with st.spinner("Provádím audit pokladny s tolerancí 12h formátu času..."):
             try:
                 # Načtení dat
                 pokpol = load_df(file_pokpol, skip_rows=0)
@@ -53,11 +53,11 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                 terminal_all = pd.concat([karty[term_cols], amex[term_cols]], ignore_index=True).sort_values('dt')
                 terminal_all['matched'] = False
                 
-                # Rozdělení pokladny podle nového sloupce ZpPlat (E)
+                # Rozdělení pokladny podle nového sloupce ZpPlat
                 pokpol_karty = pokpol[pokpol['ZpPlat'] == 'K'].copy()
                 pokpol_ostatni = pokpol[pokpol['ZpPlat'] != 'K'].copy()
                 
-                # --- 1. KROK: VYRUŠENÍ VNITŘNÍCH STOREN V KASE ---
+                # --- 1. KROK: VYRUŠENÍ VNITŘNÍCH STOREN В KASE ---
                 pokpol_karty['vnitrni_storno'] = False
                 pokpol_k_pos = pokpol_karty[pokpol_karty['Cena'] > 0].copy().sort_values('dt')
                 pokpol_k_neg = pokpol_karty[pokpol_karty['Cena'] < 0].copy().sort_values('dt')
@@ -67,8 +67,13 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                     target_amt = abs(n_row['Cena'])
                     candidates = pokpol_k_pos[(pokpol_k_pos['Cena'] == target_amt) & (~pokpol_k_pos['vnitrni_storno'])]
                     if not candidates.empty:
+                        # Počítáme rozdíl času s tolerancí (pokud je rozdíl cca 12 hodin, bereme to v úvahu)
                         time_diffs = (candidates['dt'] - n_row['dt']).abs()
-                        best_p_idx = time_diffs.idxmin()
+                        # Upravíme pro případný 12h překlop
+                        time_diffs_12h = ((candidates['dt'] - n_row['dt']).abs() - pd.Timedelta(hours=12)).abs()
+                        final_diffs = pd.concat([time_diffs, time_diffs_12h], axis=1).min(axis=1)
+                        best_p_idx = final_diffs.idxmin()
+                        
                         pokpol_k_pos.loc[best_p_idx, 'vnitrni_storno'] = True
                         storna_rows.append({
                             'Datum Pokladna': n_row['Datum a Čas'],
@@ -86,10 +91,9 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                             'Stav': 'Sirotčí storno (Chybí prodej)'
                         })
                 
-                # Pouze prodeje, které nebyly stornovány
                 pokpol_active_karty = pokpol_k_pos[~pokpol_k_pos['vnitrni_storno']].copy()
                 
-                # --- 2. KROK: PÁROVÁNÍ 1:1 KASA (K) VS BANKA ---
+                # --- 2. KROK: INTELLIGENTNÍ PÁROVÁNÍ 1:1 S TOLERANCÍ NA 12H POSUN ---
                 matched_list = []
                 unmatched_pokpol = []
                 
@@ -98,10 +102,15 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                     candidates = terminal_all[(terminal_all['Částka brutto'] == amt) & (~terminal_all['matched'])]
                     
                     if not candidates.empty:
-                        time_diffs = (candidates['dt'] - row['dt']).abs()
-                        best_idx = time_diffs.idxmin()
-                        terminal_all.loc[best_idx, 'matched'] = True
+                        # Výpočet klasického rozdílu a rozdílu po přičtení 12 hodin (AM/PM oprava)
+                        diff_normal = (candidates['dt'] - row['dt']).abs()
+                        diff_12h = ((candidates['dt'] - (row['dt'] + pd.Timedelta(hours=12))).abs())
                         
+                        # Spojíme oba rozdíly a vybereme ten nejmenší možný
+                        combined_diffs = pd.concat([diff_normal, diff_12h], axis=1).min(axis=1)
+                        best_idx = combined_diffs.idxmin()
+                        
+                        terminal_all.loc[best_idx, 'matched'] = True
                         matched_list.append({
                             'Pokladna Datum': row['Datum a Čas'],
                             'Doklad CZAK': row['CZAK'],
@@ -111,12 +120,12 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                             'Typ karty': terminal_all.loc[best_idx, 'Typ karty'],
                             'Číslo karty': terminal_all.loc[best_idx, 'Číslo karty'],
                             'Zdroj': terminal_all.loc[best_idx, 'Zdroj'],
-                            'Stav': 'Spárováno 1:1'
+                            'Stav': 'Spárováno (AM/PM vyřešeno)'
                         })
                     else:
                         unmatched_pokpol.append(row)
                 
-                # --- 3. KROK: AUDIT ZÁMĚN A PŘEKLEPŮ ---
+                # --- 3. KROK: AUDIT ZÁMĚN A REÁLNÝCH ROZDÍLŮ ---
                 df_prebyva_terminal = terminal_all[~terminal_all['matched']].copy()
                 df_chyby_preklepy_zaměny = []
                 
@@ -127,7 +136,7 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                         'Částka v Kase': row['Cena'],
                         'Částka v Bance': 0,
                         'Doklad / Karta': row['CZAK'],
-                        'Dohledaná poznámka': 'Zavřeno na kartu, ale zákazník neodpípl / transakce neprošla.'
+                        'Dohledaná poznámka': 'Zavřeno na kartu, ale na terminálu tato částka vůbec neproběhla.'
                     })
                 
                 for t_idx, t_row in df_prebyva_terminal.iterrows():
@@ -145,7 +154,7 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                             'Částka v Kase': best_h_row['Cena'],
                             'Částka v Bance': amt,
                             'Doklad / Karta': best_h_row['CZAK'],
-                            'Dohledaná poznámka': f"V kase je zadáno jako Hotovost (ZpPlat={best_h_row['ZpPlat']}), ale na terminálu prošla karta."
+                            'Dohledaná poznámka': f"V kase zapsáno jako Hotovost, ale na terminálu prošla karta."
                         })
                         terminal_all.loc[t_idx, 'matched'] = True
                         continue
@@ -160,7 +169,7 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                                 'Částka v Kase': r_k['Cena'],
                                 'Částka v Bance': amt,
                                 'Doklad / Karta': r_k['CZAK'],
-                                'Dohledaná poznámka': f"V kase je zadáno {r_k['Cena']} Kč, ale na terminál naťukali {amt} Kč (rozdíl {amt - r_k['Cena']} Kč)."
+                                'Dohledaná poznámka': f"V kase zadáno {r_k['Cena']} Kč, ale na terminál naťukali {amt} Kč."
                             })
                             terminal_all.loc[t_idx, 'matched'] = True
                             df_chyby_preklepy_zaměny = [x for x in df_chyby_preklepy_zaměny if x['Doklad / Karta'] != r_k['CZAK']]
@@ -175,17 +184,17 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                         'Částka v Kase': 0,
                         'Částka v Bance': amt,
                         'Doklad / Karta': t_row['Číslo karty'],
-                        'Dohledaná poznámka': f"Peníze dorazily na účet ({t_row['Zdroj']}), ale v kase chybí jakýkoliv doklad."
+                        'Dohledaná poznámka': f"Peníze jsou v bance ({t_row['Zdroj']}), ale v kase chybí doklad."
                     })
                 
                 df_neshody_final = pd.DataFrame(df_chyby_preklepy_zaměny)
                 df_matched = pd.DataFrame(matched_list)
                 df_storna_final = pd.DataFrame(storna_rows)
                 
-                st.success("Hloubkový audit tržeb hotov!")
+                st.success("Hloubkový audit tržeb (s opravou AM/PM) hotov!")
                 
                 col1, col2, col3 = st.columns(3)
-                col1.metric("Celkem chyb a neshod", f"{len(df_neshody_final)} ks")
+                col1.metric("Skutečné chyby a neshody", f"{len(df_neshody_final)} ks")
                 col2.metric("Úspěšně spárováno", f"{len(df_matched)} ks")
                 col3.metric("Vyrušená vnitřní storna", f"{len(df_storna_final)} ks")
                 
