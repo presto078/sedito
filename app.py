@@ -87,29 +87,4 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                             'Doklad CZAK (Storno)': n_row['CZAK'],
                             'Částka Storna': n_row['Cena'],
                             'Původní Doklad CZAK': 'Nenalezen',
-                            'Stav': 'Sirotčí storno (Chybí prodej)'
-                        })
-                
-                pokpol_active_karty = pokpol_k_pos[~pokpol_k_pos['vnitrni_storno']].copy()
-                
-                # --- 2. KROK: INTELIGENTNÍ PÁROVÁNÍ 1:1 S OPRAVOU AM/PM ČASU ---
-                matched_list = []
-                unmatched_pokpol = []
-                
-                for idx, row in pokpol_active_karty.iterrows():
-                    amt = row['Cena']
-                    candidates = terminal_all[(terminal_all['Částka brutto'] == amt) & (~terminal_all['matched'])]
-                    
-                    if not candidates.empty:
-                        diff_normal = (candidates['dt'] - row['dt']).abs()
-                        diff_12h = ((candidates['dt'] - (row['dt'] + pd.Timedelta(hours=12))).abs())
-                        combined_diffs = pd.concat([diff_normal, diff_12h], axis=1).min(axis=1)
-                        best_idx = combined_diffs.idxmin()
-                        
-                        terminal_all.loc[best_idx, 'matched'] = True
-                        matched_list.append({
-                            'Pokladna Datum': row['Datum a Čas'],
-                            'Doklad CZAK': row['CZAK'],
-                            'Částka Pokladna': amt,
-                            'Terminál Čas': terminal_all.loc[best_idx, 'Čas transakce'],
-                            'Terminál Částka': terminal_all.loc
+                            'St
