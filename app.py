@@ -56,17 +56,4 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                 
                 # Rozdělení pokladny podle sloupce ZpPlat
                 pokpol_karty = pokpol[pokpol['ZpPlat'] == 'K'].copy()
-                pokpol_ostatni = pokpol[pokpol['ZpPlat'] != 'K'].copy()
-                
-                # --- 1. KROK: VYRUŠENÍ VNITŘNÍCH STOREN В KASE ---
-                pokpol_karty['vnitrni_storno'] = False
-                pokpol_k_pos = pokpol_karty[pokpol_karty['Cena'] > 0].copy().sort_values('dt')
-                pokpol_k_neg = pokpol_karty[pokpol_karty['Cena'] < 0].copy().sort_values('dt')
-                
-                storna_rows = []
-                for n_idx, n_row in pokpol_k_neg.iterrows():
-                    target_amt = abs(n_row['Cena'])
-                    candidates = pokpol_k_pos[(pokpol_k_pos['Cena'] == target_amt) & (~pokpol_k_pos['vnitrni_storno'])]
-                    if not candidates.empty:
-                        time_diffs = (candidates['dt'] - n_row['dt']).abs()
-                        time_diffs_12h = ((candidates['dt'] - n_row['dt']).abs() - pd.Timedelta(hours
+                pokpol_ostatni = pokpol[pokpol['ZpPlat']
