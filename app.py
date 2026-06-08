@@ -60,3 +60,5 @@ if st.button("🚀 Spustit hloubkovou analýzu", use_container_width=True):
                 
                 # --- 1. KROK: VYRUŠENÍ VNITŘNÍCH STOREN В KASE ---
                 pokpol_karty['vnitrni_storno'] = False
+                pokpol_k_pos = pokpol_karty[pokpol_karty['Cena'] > 0].copy()
+                pokpol_k
